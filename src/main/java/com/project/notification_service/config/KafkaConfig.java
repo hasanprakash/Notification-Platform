@@ -23,6 +23,8 @@ import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
 import org.springframework.kafka.support.serializer.JacksonJsonSerializer;
 
 import com.project.notification_service.entity.Notification;
+import com.project.notification_service.utility.JacksonDeserializer;
+import com.project.notification_service.utility.JacksonSerializer;
 
 @EnableKafka
 @Configuration
@@ -38,8 +40,14 @@ public class KafkaConfig {
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, "notification-group");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, JacksonJsonDeserializer.class);
-        return new DefaultKafkaConsumerFactory<>(props);
+        
+        // Create instance deserializer for Notification
+        JacksonDeserializer<Notification> deserializer = new JacksonDeserializer<>(Notification.class);
+        return new DefaultKafkaConsumerFactory<>(
+                props,
+                new StringDeserializer(),
+                deserializer
+        );
     }
 
     // Listener container factory (Spring looks for this bean by default)
@@ -57,8 +65,13 @@ public class KafkaConfig {
         Map<String, Object> props = new HashMap<>();
         props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JacksonJsonSerializer.class);
-        return new DefaultKafkaProducerFactory<>(props);
+
+        // value serializer is provided via instance below
+        return new DefaultKafkaProducerFactory<>(
+                props,
+                new StringSerializer(),
+                new JacksonSerializer<>()
+        );
     }
 
     // KafkaTemplate for sending messages
