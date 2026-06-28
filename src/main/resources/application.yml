@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: notification-service
+  datasource:
+    url: jdbc:postgresql://localhost:15432/notification_db
+    username: myuser
+    password: mypassword
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Kolkata
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+    #   key-serializer: org.apache.kafka.common.serialization.StringSerializer
+    #   value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: notification-group
+      auto-offset-reset: earliest
+      # key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring:
+          json:
+            trusted:
+              packages: '*'
+    listener:
+      type: batch
+      poll-timeout: 3000
+      missing-topics-fatal: false
+    admin:
+      fail-fast: false
+
+server:
+  port: 8888
+
+logging:
+  level:
+    root: INFO
+    org.springframework.kafka: INFO
+    org.apache.kafka: INFO
