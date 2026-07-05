@@ -19,4 +19,21 @@ public class Notification {
     private String userId;
     private String type;
     private String message;
+    
+    @Column(name = "retry_count", nullable = false)
+    private Integer retryCount = 0;
+
+    @Column(name = "status", nullable = false)
+    private String status;
+
+    @PrePersist
+    @PreUpdate
+    private void ensureRetryCountAndStatus() {
+        if (this.retryCount == null) {
+            this.retryCount = 0;
+        }
+        if (this.status == null) {
+            this.status = "PENDING";
+        }
+    }
 }
