@@ -13,7 +13,7 @@ public class KafkaTopicConfigurator {
     public NewTopic notificationTopic() {
         System.out.println("Creating a topic: notification-events");
         return TopicBuilder.name("notification-events")
-                .partitions(1)
+                .partitions(3)
                 .replicas(1)
                 .build();
     }
