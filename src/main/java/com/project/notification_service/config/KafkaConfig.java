@@ -56,6 +56,12 @@ public class KafkaConfig {
         ConcurrentKafkaListenerContainerFactory<String, Notification> factory =
                 new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory());
+
+        // Commenting out, can be enabled if needed for retry tracking
+        // Using DB instead of header for retry count tracking
+        // Enable the delivery attempt header so @Header(KafkaHeaders.DELIVERY_ATTEMPT) is populated
+        // factory.getContainerProperties().setDeliveryAttemptHeader(true);
+
         return factory;
     }
 
@@ -77,6 +83,7 @@ public class KafkaConfig {
     // KafkaTemplate for sending messages
     @Bean
     public KafkaTemplate<String, Notification> kafkaTemplate() {
+        System.out.println("Producing...");
         return new KafkaTemplate<>(producerFactory());
     }
 }
