@@ -1,0 +1,2 @@
+ALTER TABLE notifications
+ADD COLUMN status VARCHAR(50) DEFAULT 'PENDING';
