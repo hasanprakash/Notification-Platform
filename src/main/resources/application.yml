@@ -48,3 +48,5 @@ logging:
     root: INFO
     org.springframework.kafka: INFO
     org.apache.kafka: INFO
+  pattern:
+    console: '%d{yyyy-MM-dd HH:mm:ss} [%thread] [TraceID: %X{traceId}] %-5level %logger{0} - %msg%n'

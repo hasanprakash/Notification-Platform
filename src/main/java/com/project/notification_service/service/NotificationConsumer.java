@@ -1,18 +1,21 @@
 package com.project.notification_service.service;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.Random;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.DltHandler;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.annotation.RetryableTopic;
+import org.slf4j.MDC;
 import org.springframework.kafka.annotation.BackOff;
 import org.springframework.kafka.retrytopic.TopicSuffixingStrategy;
 import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Service;
-
-// import org.springframework.retry.annotation.Backoff;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.project.notification_service.entity.Notification;
 import com.project.notification_service.repository.NotificationRepository;
@@ -20,10 +23,11 @@ import com.project.notification_service.repository.NotificationRepository;
 @Service
 public class NotificationConsumer {
 
-    private final NotificationRepository repository;
+    private static final Logger logger = LoggerFactory.getLogger(NotificationConsumer.class);
+    private final NotificationRepository notificationRepo;
 
-    public NotificationConsumer(NotificationRepository repository) {
-        this.repository = repository;
+    public NotificationConsumer(NotificationRepository notificationRepo) {
+        this.notificationRepo = notificationRepo;
     }
 
     // --------------------------------------------------------
@@ -36,38 +40,57 @@ public class NotificationConsumer {
         retryTopicSuffix = "-retry", 
         dltTopicSuffix = "-dlq"      
     )
+    // @Transactional is required so the DB lock stays active for the whole method!
+    @Transactional(noRollbackFor = RuntimeException.class)
     @KafkaListener(topics = "notification-events", groupId = "email-worker-group", concurrency = "3")
-    public void processEmail(Notification notificationFromKafka) throws InterruptedException {
+    public void processEmail(Notification notificationFromKafka, @Header("trace_id") String traceId) throws InterruptedException {
         if (!"EMAIL".equalsIgnoreCase(notificationFromKafka.getType())) {
             return; 
         }
 
-        // 1. Fetch the absolute latest truth from Postgres using the ID!
-        Notification dbNotification = repository.findById(notificationFromKafka.getId())
-            .orElseThrow(() -> new RuntimeException("Notification not found in DB!"));
+        try {
+            MDC.put("traceId", traceId);
 
-        // If DB says retryCount is 0, this is Attempt #1. If retryCount is 1, it's Attempt #2.
-        int currentAttempt = dbNotification.getRetryCount() + 1;
-        System.out.println("\n[EMAIL WORKER] Attempt #" + currentAttempt + " for User: " + dbNotification.getUserId());
+            // 1. ACQUIRE THE LOCK
+            // If Thread A and B arrive instantly, Thread A gets the row.
+            // Thread B is literally frozen here until Thread A finishes.
+            Notification dbNotification = notificationRepo.findByIdForUpdate(notificationFromKafka.getId())
+                .orElseThrow(() -> new RuntimeException("Not found!"));
+            
+            // 2. CHECK STATUS (The actual idempotency check)
+            if ("COMPLETED".equals(dbNotification.getStatus())) {
+                System.out.println("Already processed! Ignoring.");
+                return;
+            }
 
-        // 2. SIMULATE A RANDOM FAILURE
-        boolean randomFailure = new Random().nextBoolean();
-        if (randomFailure) {
-            System.out.println("CRASH! Email Provider is down.");
-            
-            // Increment the counter in the DB and save it BEFORE throwing the exception
-            dbNotification.setRetryCount(dbNotification.getRetryCount() + 1);
-            repository.save(dbNotification);
-            
-            // Now throw the exception so Kafka moves it to the next retry topic
-            throw new RuntimeException("Email Provider Failed!"); 
+            logger.info("[EMAIL WORKER] Preparing to send Email to User: {}", dbNotification.getUserId());
+
+            // If DB says retryCount is 0, this is Attempt #1. If retryCount is 1, it's Attempt #2.
+            int currentAttempt = dbNotification.getRetryCount() + 1;
+            logger.info("[EMAIL WORKER] Attempt #{} for User: {}", currentAttempt, dbNotification.getUserId());
+
+            // 3. SIMULATE A RANDOM FAILURE
+            boolean randomFailure = new Random().nextBoolean();
+            if (randomFailure) {
+                logger.warn("CRASH! Email Provider is down.");
+                
+                // Increment the counter in the DB and save it BEFORE throwing the exception
+                dbNotification.setRetryCount(dbNotification.getRetryCount() + 1);
+                notificationRepo.save(dbNotification);
+                
+                // Now throw the exception so Kafka moves it to the next retry topic
+                throw new RuntimeException("Email Provider Failed!"); 
+            }
+
+            // 4. MARK SUCCESS
+            Thread.sleep(1000); 
+            dbNotification.setStatus("COMPLETED");
+            notificationRepo.save(dbNotification);
+            logger.info("SUCCESS: Email sent! Message: {}", dbNotification.getMessage());
         }
-
-        // 3. SUCCESS
-        Thread.sleep(1000); 
-        System.out.println("SUCCESS: Email sent! Message: " + dbNotification.getMessage());
-        
-        // (Optional) You can reset retry_count to 0 here if you want to track pure successes.
+        finally {
+            MDC.clear(); // Clear the MDC after the request is processed
+        }
     }
 
     // --------------------------------------------------------
@@ -83,9 +106,9 @@ public class NotificationConsumer {
             return;
         }
         
-        System.out.println("[SMS WORKER] Preparing to send SMS to User: " + notification.getUserId());
+        logger.info("[SMS WORKER] Preparing to send SMS to User: {}", notification.getUserId());
         Thread.sleep(1000); 
-        System.out.println("[SMS WORKER] ✅ SUCCESS: SMS sent! Message: " + notification.getMessage());
+        logger.info("[SMS WORKER] SUCCESS: SMS sent! Message: {}", notification.getMessage());
     }
 
     // --------------------------------------------------------
@@ -101,9 +124,9 @@ public class NotificationConsumer {
             return;
         }
         
-        System.out.println("[PUSH WORKER] Preparing to send Push Notification to User: " + notification.getUserId());
+        logger.info("[PUSH WORKER] Preparing to send Push Notification to User: {}", notification.getUserId());
         Thread.sleep(1000); 
-        System.out.println("[PUSH WORKER] ✅ SUCCESS: Push sent! Message: " + notification.getMessage());
+        logger.info("[PUSH WORKER] SUCCESS: Push sent! Message: {}", notification.getMessage());
     }
 
 
@@ -114,19 +137,19 @@ public class NotificationConsumer {
     @DltHandler
     public void processDltMessage(Notification notificationFromKafka, 
                                   @Header(KafkaHeaders.EXCEPTION_MESSAGE) String errorMessage) {
-        System.out.println("\n💀 [DLQ] Message completely failed after 3 retries!");
+        logger.error("[DLQ] Message completely failed after 3 retries!");
         
         // Fetch the entity one last time
-        repository.findById(notificationFromKafka.getId()).ifPresent(dbNotification -> {
+        notificationRepo.findById(notificationFromKafka.getId()).ifPresent(dbNotification -> {
             
-            System.out.println("User: " + dbNotification.getUserId());
-            System.out.println("Final DB Retry Count was: " + dbNotification.getRetryCount());
+            logger.error("User: {}", dbNotification.getUserId());
+            logger.error("Final DB Retry Count was: {}", dbNotification.getRetryCount());
             
             // Overwrite the 'type' (or create a new 'status' column in your DB)
-            dbNotification.setType("FAILED_PERMANENTLY"); 
-            repository.save(dbNotification);
+            dbNotification.setStatus("FAILED_PERMANENTLY"); 
+            notificationRepo.save(dbNotification);
             
-            System.out.println("Action: Database row marked as FAILED_PERMANENTLY.\n");
+            logger.error("Action: Database row marked as FAILED_PERMANENTLY.");
         });
     }
 }
