@@ -1,7 +1,5 @@
 package com.project.notification_service.service;
 
-import java.time.LocalDateTime;
-import java.util.Optional;
 import java.util.Random;
 
 import org.slf4j.Logger;
