@@ -1,5 +1,6 @@
 package com.project.notification_service.service;
 
+import java.time.LocalDateTime;
 import java.util.Random;
 
 import org.slf4j.Logger;
@@ -16,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.project.notification_service.entity.Notification;
+import com.project.notification_service.enums.NotificationStatus;
 import com.project.notification_service.repository.NotificationRepository;
 
 @Service
@@ -23,9 +25,10 @@ public class NotificationConsumer {
 
     private static final Logger logger = LoggerFactory.getLogger(NotificationConsumer.class);
     private final NotificationRepository notificationRepo;
-
-    public NotificationConsumer(NotificationRepository notificationRepo) {
+    private final RateLimiterService rateLimiterService;
+    public NotificationConsumer(NotificationRepository notificationRepo, RateLimiterService rateLimiterService) {
         this.notificationRepo = notificationRepo;
+        this.rateLimiterService = rateLimiterService;
     }
 
     // --------------------------------------------------------
@@ -56,9 +59,18 @@ public class NotificationConsumer {
                 .orElseThrow(() -> new RuntimeException("Not found!"));
             
             // 2. CHECK STATUS (The actual idempotency check)
-            if ("COMPLETED".equals(dbNotification.getStatus())) {
-                System.out.println("Already processed! Ignoring.");
+            if (!"PENDING".equals(dbNotification.getStatus())) {
+                logger.info("Already processed or Already Rate Limited! Ignoring.");
                 return;
+            }
+
+            // 3. CHECK RATE LIMIT - random failures are counted as rate limit hits
+            if (!rateLimiterService.isAllowed(dbNotification.getUserId())) {
+                logger.info("Rate limit hit! Pausing message for 1 hour.");
+                dbNotification.setStatus("RATE_LIMITED");
+                dbNotification.setSendAfter(LocalDateTime.now().plusHours(1));
+                notificationRepo.save(dbNotification);
+                return; // Exit gracefully. Do not throw an exception!
             }
 
             logger.info("[EMAIL WORKER] Preparing to send Email to User: {}", dbNotification.getUserId());
@@ -67,7 +79,7 @@ public class NotificationConsumer {
             int currentAttempt = dbNotification.getRetryCount() + 1;
             logger.info("[EMAIL WORKER] Attempt #{} for User: {}", currentAttempt, dbNotification.getUserId());
 
-            // 3. SIMULATE A RANDOM FAILURE
+            // 4. SIMULATE A RANDOM FAILURE
             boolean randomFailure = new Random().nextBoolean();
             if (randomFailure) {
                 logger.warn("CRASH! Email Provider is down.");
@@ -80,9 +92,9 @@ public class NotificationConsumer {
                 throw new RuntimeException("Email Provider Failed!"); 
             }
 
-            // 4. MARK SUCCESS
+            // 5. MARK SUCCESS
             Thread.sleep(1000); 
-            dbNotification.setStatus("COMPLETED");
+            dbNotification.setStatus(NotificationStatus.SENT.getStatus());
             notificationRepo.save(dbNotification);
             logger.info("SUCCESS: Email sent! Message: {}", dbNotification.getMessage());
         }

@@ -3,6 +3,9 @@ package com.project.notification_service.config;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 
@@ -18,9 +21,6 @@ import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
-import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
-// import org.springframework.kafka.support.serializer.JsonSerializer;
-import org.springframework.kafka.support.serializer.JacksonJsonSerializer;
 
 import com.project.notification_service.entity.Notification;
 import com.project.notification_service.utility.JacksonDeserializer;
@@ -30,6 +30,8 @@ import com.project.notification_service.utility.JacksonSerializer;
 @Configuration
 public class KafkaConfig {
 
+    private static final Logger logger = LoggerFactory.getLogger(KafkaConfig.class);
+    
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
 
@@ -83,7 +85,7 @@ public class KafkaConfig {
     // KafkaTemplate for sending messages
     @Bean
     public KafkaTemplate<String, Notification> kafkaTemplate() {
-        System.out.println("Producing...");
+        logger.info("Producing...");
         return new KafkaTemplate<>(producerFactory());
     }
 }

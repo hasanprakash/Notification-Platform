@@ -1,5 +1,7 @@
 package com.project.notification_service.entity;
 
+import java.time.LocalDateTime;
+
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -25,6 +27,9 @@ public class Notification {
 
     @Column(name = "status", nullable = false)
     private String status;
+
+    @Column(name = "send_after", nullable = true)
+    private LocalDateTime sendAfter;
 
     @PrePersist
     @PreUpdate
