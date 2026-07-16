@@ -2,7 +2,11 @@
 Large Scale Notification Platform With Scalable System Design Components
 
 Redis Insight
+
 <img width="2555" height="1391" alt="image" src="https://github.com/user-attachments/assets/10b16614-e989-4ecc-ae84-96b5990fcd4f" />
 
-Grafana
-<img width="2483" height="1321" alt="image" src="https://github.com/user-attachments/assets/63098ee1-f553-4ea1-9174-ded35a2b5473" />
+
+Grafana from K6
+
+<img width="2544" height="1370" alt="image" src="https://github.com/user-attachments/assets/96c8c4fb-00e2-4fd8-89ae-2c7f00822f29" />
+
