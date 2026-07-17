@@ -20,15 +20,23 @@ import com.project.notification_service.entity.Notification;
 import com.project.notification_service.enums.NotificationStatus;
 import com.project.notification_service.repository.NotificationRepository;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 @Service
 public class NotificationConsumer {
 
     private static final Logger logger = LoggerFactory.getLogger(NotificationConsumer.class);
     private final NotificationRepository notificationRepo;
     private final RateLimiterService rateLimiterService;
-    public NotificationConsumer(NotificationRepository notificationRepo, RateLimiterService rateLimiterService) {
+    private final MeterRegistry meterRegistry;
+
+    public NotificationConsumer(
+            NotificationRepository notificationRepo,
+            RateLimiterService rateLimiterService,
+            MeterRegistry meterRegistry) {
         this.notificationRepo = notificationRepo;
         this.rateLimiterService = rateLimiterService;
+        this.meterRegistry = meterRegistry;
     }
 
     // --------------------------------------------------------
@@ -51,6 +59,7 @@ public class NotificationConsumer {
 
         try {
             MDC.put("traceId", traceId);
+            MDC.put("notificationId", String.valueOf(notificationFromKafka.getId()));
 
             // 1. ACQUIRE THE LOCK
             // If Thread A and B arrive instantly, Thread A gets the row.
@@ -60,12 +69,14 @@ public class NotificationConsumer {
             
             // 2. CHECK STATUS (The actual idempotency check)
             if (!"PENDING".equals(dbNotification.getStatus())) {
+                MDC.put("status", "IGNORED");
                 logger.info("Already processed or Already Rate Limited! Ignoring.");
                 return;
             }
 
             // 3. CHECK RATE LIMIT - random failures are counted as rate limit hits
             if (!rateLimiterService.isAllowed(dbNotification.getUserId())) {
+                MDC.put("status", "RATE_LIMITED");
                 logger.info("Rate limit hit! Pausing message for 1 hour.");
                 dbNotification.setStatus("RATE_LIMITED");
                 dbNotification.setSendAfter(LocalDateTime.now().plusHours(1));
@@ -82,12 +93,16 @@ public class NotificationConsumer {
             // 4. SIMULATE A RANDOM FAILURE
             boolean randomFailure = new Random().nextBoolean();
             if (randomFailure) {
-                logger.warn("CRASH! Email Provider is down.");
-                
                 // Increment the counter in the DB and save it BEFORE throwing the exception
+                // TODO - to be updated with redis retry count instead
                 dbNotification.setRetryCount(dbNotification.getRetryCount() + 1);
                 notificationRepo.save(dbNotification);
-                
+
+                meterRegistry.counter("notifications_failed_total", "type", "EMAIL").increment();
+                meterRegistry.summary("retry_count", "type", "EMAIL").record(dbNotification.getRetryCount());
+                MDC.put("status", "FAILED");
+                logger.warn("CRASH! Email Provider is down.");
+
                 // Now throw the exception so Kafka moves it to the next retry topic
                 throw new RuntimeException("Email Provider Failed!"); 
             }
@@ -96,10 +111,13 @@ public class NotificationConsumer {
             Thread.sleep(1000); 
             dbNotification.setStatus(NotificationStatus.SENT.getStatus());
             notificationRepo.save(dbNotification);
+
+            meterRegistry.counter("notifications_sent_total", "type", "EMAIL").increment();
+            MDC.put("status", "SUCCESS");
             logger.info("SUCCESS: Email sent! Message: {}", dbNotification.getMessage());
         }
         finally {
-            MDC.clear(); // Clear the MDC after the request is processed
+            MDC.clear();
         }
     }
 
@@ -146,20 +164,32 @@ public class NotificationConsumer {
     // If it fails all 4 times, Spring automatically routes the message to this method
     @DltHandler
     public void processDltMessage(Notification notificationFromKafka, 
-                                  @Header(KafkaHeaders.EXCEPTION_MESSAGE) String errorMessage) {
-        logger.error("[DLQ] Message completely failed after 3 retries!");
-        
-        // Fetch the entity one last time
-        notificationRepo.findById(notificationFromKafka.getId()).ifPresent(dbNotification -> {
+                                  @Header(KafkaHeaders.EXCEPTION_MESSAGE) String errorMessage,
+                                  @Header(value = "trace_id", required = false) String traceId) {
+        try {
+            if (traceId != null) {
+                MDC.put("traceId", traceId);
+            }
+            MDC.put("notificationId", String.valueOf(notificationFromKafka.getId()));
+            MDC.put("status", "DLQ");
+
+            meterRegistry.counter("notifications_dlq_total", "type", "EMAIL").increment();
+            logger.error("[DLQ] Message completely failed after 3 retries!");
             
-            logger.error("User: {}", dbNotification.getUserId());
-            logger.error("Final DB Retry Count was: {}", dbNotification.getRetryCount());
-            
-            // Overwrite the 'type' (or create a new 'status' column in your DB)
-            dbNotification.setStatus("FAILED_PERMANENTLY"); 
-            notificationRepo.save(dbNotification);
-            
-            logger.error("Action: Database row marked as FAILED_PERMANENTLY.");
-        });
+            // Fetch the entity one last time
+            notificationRepo.findById(notificationFromKafka.getId()).ifPresent(dbNotification -> {
+                
+                logger.error("User: {}", dbNotification.getUserId());
+                logger.error("Final DB Retry Count was: {}", dbNotification.getRetryCount());
+                
+                // Overwrite the 'type' (or create a new 'status' column in your DB)
+                dbNotification.setStatus("FAILED_PERMANENTLY"); 
+                notificationRepo.save(dbNotification);
+                
+                logger.error("Action: Database row marked as FAILED_PERMANENTLY.");
+            });
+        } finally {
+            MDC.clear();
+        }
     }
 }
