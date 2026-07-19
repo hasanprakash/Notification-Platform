@@ -95,15 +95,6 @@ sequenceDiagram
 
 When all 4 attempts are exhausted, Spring Kafka automatically forwards the message to `notification-events-dlq`, where `@DltHandler` performs terminal processing.
 
-```mermaid
-flowchart LR
-    A[Attempt 4 fails] --> B[notification-events-dlq]
-    B --> C[@DltHandler<br/>processDltMessage]
-    C --> D[Increment notifications_dlq_total metric]
-    C --> E[Set status → FAILED_PERMANENTLY]
-    C --> F[Log final retry_count]
-```
-
 | Step | Action |
 |------|--------|
 | 1 | Message arrives on `notification-events-dlq` after 4 failed attempts |
