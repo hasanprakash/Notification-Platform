@@ -37,27 +37,31 @@ public class NotificationController {
 
     @PostMapping
     public String sendNotification(@RequestBody Notification notification) {
-        // Save to PostgreSQL Database
-        Notification savedNotification = repository.save(notification);
-
-        // Generate FedEx Tracking Number
         String traceId = UUID.randomUUID().toString();
-        MDC.put("traceId", traceId);
-        logger.info("Received API Request to send notification, traceId: {}", traceId); 
 
-        if (!preferenceService.checkPreference(savedNotification.getUserId(), savedNotification.getType())) {
-            savedNotification.setStatus(NotificationStatus.SKIPPED.getStatus());
-            repository.save(savedNotification);
+        try {
+            MDC.put("traceId", traceId);
+
+            Notification savedNotification = repository.save(notification);
+            MDC.put("notificationId", String.valueOf(savedNotification.getId()));
+            MDC.put("status", "ACCEPTED");
+            logger.info("Received API Request to send notification");
+
+            if (!preferenceService.checkPreference(savedNotification.getUserId(), savedNotification.getType())) {
+                savedNotification.setStatus(NotificationStatus.SKIPPED.getStatus());
+                repository.save(savedNotification);
+                MDC.put("status", "SKIPPED");
+                logger.info("Notification skipped: user has disabled {} notifications.", savedNotification.getType());
+                return "Notification skipped: user has disabled " + savedNotification.getType() + " notifications.";
+            }
+
+            kafkaTemplate.send(notificationProducer.buildKafkaMessage(savedNotification, traceId));
+            MDC.put("status", "PUBLISHED");
+            logger.info("Notification processed and published successfully!");
+            return "Notification processed and published successfully!";
+        } finally {
             MDC.clear();
-            logger.info("Notification skipped: user has disabled {} notifications.", savedNotification.getType());
-            return "Notification skipped: user has disabled " + savedNotification.getType() + " notifications.";
+            logger.info("MDC cleared in NotificationController");
         }
-
-        // Publish to Kafka Topic
-        kafkaTemplate.send(notificationProducer.buildKafkaMessage(savedNotification, traceId));
-
-        MDC.clear(); // Clear the MDC after the request is processed
-        logger.info("Notification processed and published successfully!");
-        return "Notification processed and published successfully!";
     }
 }

@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit;
 public class RateLimiterService {
 
     private final StringRedisTemplate redisTemplate;
-    private static final int MAX_REQUESTS = 5;
+    private static final int MAX_REQUESTS = 75;
     private static final long WINDOW_IN_MS = TimeUnit.HOURS.toMillis(1);
 
     // The Lua Script: Drops old, counts current, adds new if allowed.
