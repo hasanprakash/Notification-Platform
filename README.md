@@ -1,6 +1,6 @@
 # Notification Platform
 
-A production-style, event-driven notification service built to demonstrate **system design concepts** relevant to **Software Engineer II** roles at product-based companies — async processing, fault tolerance, idempotency, egress rate limiting, and observability under load.
+A production-style, event-driven notification platform with scalable System Design Components
 
 ---
 
